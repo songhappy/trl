@@ -1,0 +1,9 @@
+compute_environment: LOCAL_MACHINE
+distributed_type: MULTI_GPU      # or MULTI_XPU/NPU, etc.
+mixed_precision: bf16            # optional
+parallelism_config:
+  parallelism_config_dp_replicate_size: 1
+  parallelism_config_dp_shard_size: 1
+  parallelism_config_tp_size: 4   # set to your TP degree
+  parallelism_config_cp_size: 1
+num_processes: 4                 # mu
