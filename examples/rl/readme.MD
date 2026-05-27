@@ -5,11 +5,11 @@ Overview
 --------
 This guide shows how to run GRPO (Group Relative Policy Optimization)
 training on Intel XPU in distributed mode using upstream PyTorch only. 
-Everything is script-based; no notebooks required.
+Everything is script-based; no notebooks required, it's migrated from examples/notebooks/grpo_trl_lora_qlora.ipynb.
 
 Tested configuration:
 - launcher: HuggingFace accelerate with MULTI_XPU distributed type
-- script: examples/rl/grpo_lora_xpu.py
+- script: examples/rl/grpo_lora_train_xpu.py
 - model: Qwen/Qwen2.5-7B-Instruct
 - dataset: AI-MO/NuminaMath-TIR
 - precision: bf16 + LoRA
@@ -36,9 +36,10 @@ bf16 precision, without needing quantization.
 
 Files
 -----
-- examples/rl/grpo_lora_xpu.py — distributed GRPO training script
+- examples/rl/grpo_lora_train_xpu.py — distributed GRPO training script
+- examples/rl/grpo_infer_xpu.py — load fine-tuned model and run inference
 - examples/accelerate_configs/multi_xpu.yaml — accelerate config for XPU
-- examples/rl/loss.py — parse training logs and plot loss curves
+- examples/rl/loss.py — parse training logs and plot loss/reward curves
 
 
 Prerequisites
@@ -78,7 +79,7 @@ LOG_FILE=grpo_run.log
 
 accelerate launch --config_file examples/accelerate_configs/multi_xpu_grpo.yaml \
     --num_processes 4 \
-    examples/rl/grpo_lora_xpu.py \
+    examples/rl/grpo_lora_train.py \
     --model_name_or_path $MODEL_PATH \
     --dataset_name $DATA_PATH \
     --max_steps 500 \
@@ -94,7 +95,7 @@ To run in the background with nohup:
 ```bash
 nohup accelerate launch --config_file examples/accelerate_configs/multi_xpu.yaml \
     --num_processes 4 \
-    examples/rl/grpo_lora_xpu.py \
+    examples/rl/grpo_lora_train_xpu.py \
     --model_name_or_path $MODEL_PATH \
     --dataset_name $DATA_PATH \
     --max_steps 500 \
@@ -110,6 +111,40 @@ Monitor and plot:
 ```bash
 tail -f $LOG_FILE
 python examples/rl/loss.py --log $LOG_FILE
+```
+
+
+Inference
+---------
+After training completes, use `grpo_infer_xpu.py` to load the LoRA
+adapter and run inference on XPU.
+
+Run on dataset test samples:
+
+```bash
+python examples/rl/grpo_infer_xpu.py \
+    --base_model $MODEL_PATH \
+    --adapter ./xpu-grpo-output \
+    --dataset_name $DATA_PATH \
+    --num_samples 5
+```
+
+Ask a single question:
+
+```bash
+python examples/rl/grpo_infer_xpu.py \
+    --base_model $MODEL_PATH \
+    --adapter ./xpu-grpo-output \
+    --question "What is the sum of all prime numbers less than 20?"
+```
+
+Merge adapter into base model and save:
+
+```bash
+python examples/rl/grpo_infer_xpu.py \
+    --base_model $MODEL_PATH \
+    --adapter ./xpu-grpo-output \
+    --merge_and_save ./xpu-grpo-merged
 ```
 
 
@@ -175,19 +210,9 @@ trl/generation/vllm_generation.py:
   is_torch_xpu_available().
 
 
-Known warnings (safe to ignore)
--------------------------------
-- CCL_WARN about MPI launcher variables:
-  expected when not using MPI launcher; XCCL falls back to ATL/OFI
-- DDP find_unused_parameters=True warning:
-  performance advisory, not a correctness issue
-- generation_config + disable_compile deprecation:
-  warning only; does not affect training
-
-
 Planned next steps
 ------------------
-1. Validate convergence on longer runs (500+ steps) with non-zero loss.
+1. Validate convergence and reward on longer runs (500+ steps) with non-zero loss.
 2. Add multi-node accelerate config for XPU clusters.
 3. Test vLLM XPU backend for faster generation during GRPO training.
 4. Profile throughput (tokens/s) and memory vs CUDA baseline.
