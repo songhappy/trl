@@ -9,10 +9,11 @@ Everything is script-based; no notebooks required, it's migrated from examples/n
 
 Tested configuration:
 - launcher: HuggingFace accelerate with MULTI_XPU distributed type
-- script: examples/rl/grpo_lora_train_xpu.py
+- script: examples/rl/grpo_lora_train.py
 - model: Qwen/Qwen2.5-7B-Instruct
 - dataset: AI-MO/NuminaMath-TIR
 - precision: bf16 + LoRA
+- hardware: 8x Intel XPU (single node)
 
 
 What is GRPO
@@ -36,10 +37,11 @@ bf16 precision, without needing quantization.
 
 Files
 -----
-- examples/rl/grpo_lora_train_xpu.py — distributed GRPO training script
-- examples/rl/grpo_infer_xpu.py — load fine-tuned model and run inference
-- examples/accelerate_configs/multi_xpu.yaml — accelerate config for XPU
-- examples/rl/loss.py — parse training logs and plot loss/reward curves
+- examples/rl/grpo_lora_train.py — distributed GRPO training script
+- examples/rl/grpo_infer.py — load fine-tuned model and run inference
+- examples/rl/log.py — parse training metrics (JSONL) and plot loss/reward curves
+- examples/rl/run_grpo.sh — end-to-end script: train, plot, and infer
+- examples/accelerate_configs/multi_xpu_grpo.yaml — accelerate config for XPU
 
 
 Prerequisites
@@ -70,81 +72,80 @@ Replace `$MODEL_PATH` and `$DATA_PATH` with your own local directories.
 
 How to run (distributed)
 -------------------------
-Set your paths and launch from the repo root:
+The easiest way is to use the all-in-one script from the repo root:
 
 ```bash
-MODEL_PATH=/path/to/Qwen2.5-7B-Instruct
-DATA_PATH=/path/to/NuminaMath-TIR
-LOG_FILE=grpo_run.log
+cd /home/guoqiong/git/trl
+nohup bash examples/rl/run_grpo.sh /home/guoqiong/models/Qwen2.5-7B-Instruct /home/guoqiong/data/NuminaMath-TIR 8 &
+```
 
+This runs training (500 steps on 8 XPUs), plots metrics, and runs inference.
+
+To run steps manually:
+
+```bash
+MODEL_PATH=/home/guoqiong/models/Qwen2.5-7B-Instruct
+DATA_PATH=/home/guoqiong/data/NuminaMath-TIR
+
+# Training
 accelerate launch --config_file examples/accelerate_configs/multi_xpu_grpo.yaml \
-    --num_processes 4 \
+    --num_processes 8 \
     examples/rl/grpo_lora_train.py \
     --model_name_or_path $MODEL_PATH \
     --dataset_name $DATA_PATH \
+    --output_dir examples/rl/xpu-grpo-output \
     --max_steps 500 \
     --logging_steps 10 \
-    --max_completion_length 256 \
-    --per_device_train_batch_size 8 \
-    --num_generations 8 \
-    2>&1 | tee $LOG_FILE
+    --save_steps 100 \
+    --max_completion_length 1024 \
+    --per_device_train_batch_size 2 \
+    --num_generations 4 \
+    --learning_rate 5e-6
 ```
 
-To run in the background with nohup:
+Monitor progress:
 
 ```bash
-nohup accelerate launch --config_file examples/accelerate_configs/multi_xpu.yaml \
-    --num_processes 4 \
-    examples/rl/grpo_lora_train_xpu.py \
-    --model_name_or_path $MODEL_PATH \
-    --dataset_name $DATA_PATH \
-    --max_steps 500 \
-    --logging_steps 10 \
-    --max_completion_length 256 \
-    --per_device_train_batch_size 8 \
-    --num_generations 8 \
-    > $LOG_FILE 2>&1 &
+tail -f examples/rl/xpu-grpo-output/run.log
 ```
 
-Monitor and plot:
+
+Plot training curves
+--------------------
+After training (or if training was interrupted and checkpoints exist):
 
 ```bash
-tail -f $LOG_FILE
-python examples/rl/loss.py --log $LOG_FILE
+cd examples/rl
+python log.py --log xpu-grpo-output/training_metrics.jsonl --output xpu-grpo-output/curves.png
 ```
+
+This generates a PNG with loss and reasoning accuracy reward curves.
 
 
 Inference
 ---------
-After training completes, use `grpo_infer_xpu.py` to load the LoRA
-adapter and run inference on XPU.
+After training completes, use `grpo_infer.py` to load the LoRA
+adapter and run inference on XPU. Use the latest checkpoint if
+training was interrupted.
 
 Run on dataset test samples:
 
 ```bash
-python examples/rl/grpo_infer_xpu.py \
-    --base_model $MODEL_PATH \
-    --adapter ./xpu-grpo-output \
-    --dataset_name $DATA_PATH \
+cd examples/rl
+python grpo_infer.py \
+    --base_model /home/guoqiong/models/Qwen2.5-7B-Instruct \
+    --adapter xpu-grpo-output/checkpoint-300 \
+    --dataset_name /home/guoqiong/data/NuminaMath-TIR \
     --num_samples 5
 ```
 
 Ask a single question:
 
 ```bash
-python examples/rl/grpo_infer_xpu.py \
-    --base_model $MODEL_PATH \
-    --adapter ./xpu-grpo-output \
+python grpo_infer.py \
+    --base_model /home/guoqiong/models/Qwen2.5-7B-Instruct \
+    --adapter xpu-grpo-output/checkpoint-300 \
     --question "What is the sum of all prime numbers less than 20?"
-```
-
-Merge adapter into base model and save:
-
-```bash
-python examples/rl/grpo_infer_xpu.py \
-    --base_model $MODEL_PATH \
-    --adapter ./xpu-grpo-output \
-    --merge_and_save ./xpu-grpo-merged
 ```
 
 
